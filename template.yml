@@ -1,0 +1,162 @@
+AWSTemplateFormatVersion: "2024-08-31"
+Description: CloudFormation template to,
+  1) create an IAM user with permissions to manage EC2, RDS, ElastiCache, and IAM resources,
+  2) create a VPC with public and private subnets
+
+Resources:
+  # Creates an IAM user
+  IAMUser:
+    Type: AWS::IAM::User
+    Properties:
+      UserName: demoUser
+
+  # Generates an access key for the user, enabling programmatic access
+  IAMUserAccessKey:
+    Type: AWS::IAM::AccessKey
+    Properties:
+      UserName: !Ref IAMUser
+
+  # Attaches a policy to the user that grants full access to EC2, RDS, ElastiCache, and IAM resources
+  IAMUserPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: demoPolicy
+      PolicyDocument:
+        Version: "2024-08-31"
+        Statement:
+          - Effect: Allow
+            Action:
+              - ec2:*
+              - rds:*
+              - elasticache:*
+              - iam:*
+            Resource: "*"
+      Users:
+        - !Ref IAMUser
+
+  # Create the VPC
+  VPC:
+    Type: "AWS::EC2::VPC"
+    Properties:
+      CidrBlock: "10.0.0.0/16"
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: "demoCustomVPC"
+
+  # Create an Internet Gateway for public internet access
+  InternetGateway:
+    Type: "AWS::EC2::InternetGateway"
+
+  # Attach the Internet Gateway to the VPC
+  AttachGateway:
+    Type: "AWS::EC2::VPCGatewayAttachment"
+    Properties:
+      VpcId: !Ref "VPC"
+      InternetGatewayId: !Ref "InternetGateway"
+
+  # Create a public route table
+  PublicRouteTable:
+    Type: "AWS::EC2::RouteTable"
+    Properties:
+      VpcId: !Ref "VPC"
+
+  # Create a public route to the Internet Gateway
+  PublicRoute:
+    Type: "AWS::EC2::Route"
+    Properties:
+      RouteTableId: !Ref "PublicRouteTable"
+      DestinationCidrBlock: "0.0.0.0/0"
+      GatewayId: !Ref "InternetGateway"
+
+  # Create two public subnets
+  PublicSubnet1:
+    Type: "AWS::EC2::Subnet"
+    Properties:
+      VpcId: !Ref "VPC"
+      CidrBlock: "10.0.1.0/24"
+      MapPublicIpOnLaunch: true # Automatically assign public IPs to instances launched in this subnet
+      AvailabilityZone: !Select [0, !GetAZs ""] # Select the first availability zone
+      Tags:
+        - Key: Name
+          Value: "PublicSubnet1"
+
+  PublicSubnet2:
+    Type: "AWS::EC2::Subnet"
+    Properties:
+      VpcId: !Ref "VPC"
+      CidrBlock: "10.0.2.0/24"
+      MapPublicIpOnLaunch: true # Automatically assign public IPs to instances launched in this subnet
+      AvailabilityZone: !Select [1, !GetAZs ""] # Select the second availability zone
+      Tags:
+        - Key: Name
+          Value: "PublicSubnet2"
+
+  # Associate public subnets with the public route table
+  PublicSubnet1RouteTableAssociation:
+    Type: "AWS::EC2::SubnetRouteTableAssociation"
+    Properties:
+      SubnetId: !Ref "PublicSubnet1"
+      RouteTableId: !Ref "PublicRouteTable"
+
+  PublicSubnet2RouteTableAssociation:
+    Type: "AWS::EC2::SubnetRouteTableAssociation"
+    Properties:
+      SubnetId: !Ref "PublicSubnet2"
+      RouteTableId: !Ref "PublicRouteTable"
+
+  # Create two private subnets
+  PrivateSubnet1:
+    Type: "AWS::EC2::Subnet"
+    Properties:
+      VpcId: !Ref "VPC"
+      CidrBlock: "10.0.3.0/24"
+      AvailabilityZone: !Select [0, !GetAZs ""] # Select the first availability zone
+      Tags:
+        - Key: Name
+          Value: "PrivateSubnet1"
+
+  PrivateSubnet2:
+    Type: "AWS::EC2::Subnet"
+    Properties:
+      VpcId: !Ref "VPC"
+      CidrBlock: "10.0.4.0/24"
+      AvailabilityZone: !Select [1, !GetAZs ""] # Select the second availability zone
+      Tags:
+        - Key: Name
+          Value: "PrivateSubnet2"
+
+# Outputs values for easy reference
+Outputs:
+  AccessKeyId:
+    Description: Access Key ID
+    Value: !Ref IAMUserAccessKey
+    Export:
+      Name: !Sub ${AWS::StackName}-AccessKeyId
+
+  SecretAccessKey:
+    Description: Secret Access Key
+    Value: !GetAtt IAMUserAccessKey.SecretAccessKey
+    Export:
+      Name: !Sub ${AWS::StackName}-SecretAccessKey
+
+  VPCId:
+    Description: "VPC ID"
+    Value: !Ref "VPC"
+
+  PublicSubnet1Id:
+    Description: "Public Subnet 1 ID"
+    Value: !Ref "PublicSubnet1"
+
+  PublicSubnet2Id:
+    Description: "Public Subnet 2 ID"
+    Value: !Ref "PublicSubnet2"
+
+  PrivateSubnet1Id:
+    Description: "Private Subnet 1 ID"
+    Value: !Ref "PrivateSubnet1"
+
+  PrivateSubnet2Id:
+    Description: "Private Subnet 2 ID"
+    Value: !Ref "PrivateSubnet2"
