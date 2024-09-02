@@ -106,6 +106,34 @@ Resources:
       SubnetId: !Ref "PublicSubnet2"
       RouteTableId: !Ref "PublicRouteTable"
 
+  # Out of scope
+  # Create an Elastic IP for the NAT Gateway
+  # ElasticIP:
+  # Type: "AWS::EC2::EIP"
+
+  # Out of scope
+  # Create the NAT Gateway in any one of the public subnets
+  # NATGateway:
+  # Type: "AWS::EC2::NatGateway"
+  # Properties:
+  # AllocationId: !GetAtt "ElasticIP.AllocationId"
+  # SubnetId: !Ref "PublicSubnet1"
+
+  # Create a private route table
+  PrivateRouteTable:
+    Type: "AWS::EC2::RouteTable"
+    Properties:
+      VpcId: !Ref "VPC"
+
+  # Out of scope
+  # Create a private route to NAT Gateway for outbound internet access
+  # PrivateRoute:
+  # Type: "AWS::EC2::Route"
+  # Properties:
+  # RouteTableId: !Ref "PrivateRouteTable"
+  # DestinationCidrBlock: "0.0.0.0/0"
+  # NatGatewayId: !Ref "NatGateway"
+
   # Create two private subnets
   PrivateSubnet1:
     Type: "AWS::EC2::Subnet"
@@ -126,6 +154,19 @@ Resources:
       Tags:
         - Key: Name
           Value: "PrivateSubnet2"
+
+  # Associate private subnets with the private route table
+  PrivateSubnet1RouteTableAssociation:
+    Type: "AWS::EC2::SubnetRouteTableAssociation"
+    Properties:
+      SubnetId: !Ref "PrivateSubnet1"
+      RouteTableId: !Ref "PrivateRouteTable"
+
+  PrivateSubnet2RouteTableAssociation:
+    Type: "AWS::EC2::SubnetRouteTableAssociation"
+    Properties:
+      SubnetId: !Ref "PrivateSubnet2"
+      RouteTableId: !Ref "PrivateRouteTable"
 
 # Outputs values for easy reference
 Outputs:
