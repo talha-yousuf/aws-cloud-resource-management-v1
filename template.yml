@@ -1,7 +1,8 @@
 AWSTemplateFormatVersion: "2024-08-31"
-Description: CloudFormation template to,
-  1) create an IAM user with permissions to manage EC2, RDS, ElastiCache, and IAM resources,
-  2) create a VPC with public and private subnets
+Description: CloudFormation template to, 1) create an IAM user with permissions
+  to manage EC2, RDS, ElastiCache, and IAM resources, 2) create a VPC with
+  public and private subnets 3) Launch an Auto Scaling group with two EC2
+  instances in the private subnets
 
 Resources:
   # Creates an IAM user
@@ -36,137 +37,241 @@ Resources:
 
   # Create the VPC
   VPC:
-    Type: "AWS::EC2::VPC"
+    Type: AWS::EC2::VPC
     Properties:
-      CidrBlock: "10.0.0.0/16"
+      CidrBlock: 10.0.0.0/16
       EnableDnsSupport: true
       EnableDnsHostnames: true
       Tags:
         - Key: Name
-          Value: "demoCustomVPC"
+          Value: demoCustomVPC
 
   # Create an Internet Gateway for public internet access
   InternetGateway:
-    Type: "AWS::EC2::InternetGateway"
+    Type: AWS::EC2::InternetGateway
 
   # Attach the Internet Gateway to the VPC
   AttachGateway:
-    Type: "AWS::EC2::VPCGatewayAttachment"
+    Type: AWS::EC2::VPCGatewayAttachment
     Properties:
-      VpcId: !Ref "VPC"
-      InternetGatewayId: !Ref "InternetGateway"
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
 
   # Create a public route table
   PublicRouteTable:
-    Type: "AWS::EC2::RouteTable"
+    Type: AWS::EC2::RouteTable
     Properties:
-      VpcId: !Ref "VPC"
+      VpcId: !Ref VPC
 
   # Create a public route to the Internet Gateway
   PublicRoute:
-    Type: "AWS::EC2::Route"
+    Type: AWS::EC2::Route
     Properties:
-      RouteTableId: !Ref "PublicRouteTable"
-      DestinationCidrBlock: "0.0.0.0/0"
-      GatewayId: !Ref "InternetGateway"
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
 
   # Create two public subnets
   PublicSubnet1:
-    Type: "AWS::EC2::Subnet"
+    Type: AWS::EC2::Subnet
     Properties:
-      VpcId: !Ref "VPC"
-      CidrBlock: "10.0.1.0/24"
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.1.0/24
       MapPublicIpOnLaunch: true # Automatically assign public IPs to instances launched in this subnet
-      AvailabilityZone: !Select [0, !GetAZs ""] # Select the first availability zone
+      AvailabilityZone: !Select
+        - 0
+        - !GetAZs ""
+        # Select the first availability zone
       Tags:
         - Key: Name
-          Value: "PublicSubnet1"
+          Value: PublicSubnet1
 
   PublicSubnet2:
-    Type: "AWS::EC2::Subnet"
+    Type: AWS::EC2::Subnet
     Properties:
-      VpcId: !Ref "VPC"
-      CidrBlock: "10.0.2.0/24"
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.2.0/24
       MapPublicIpOnLaunch: true # Automatically assign public IPs to instances launched in this subnet
-      AvailabilityZone: !Select [1, !GetAZs ""] # Select the second availability zone
+      AvailabilityZone: !Select
+        - 1
+        - !GetAZs ""
+        # Select the second availability zone
       Tags:
         - Key: Name
-          Value: "PublicSubnet2"
+          Value: PublicSubnet2
 
   # Associate public subnets with the public route table
   PublicSubnet1RouteTableAssociation:
-    Type: "AWS::EC2::SubnetRouteTableAssociation"
+    Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
-      SubnetId: !Ref "PublicSubnet1"
-      RouteTableId: !Ref "PublicRouteTable"
+      SubnetId: !Ref PublicSubnet1
+      RouteTableId: !Ref PublicRouteTable
 
   PublicSubnet2RouteTableAssociation:
-    Type: "AWS::EC2::SubnetRouteTableAssociation"
+    Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
-      SubnetId: !Ref "PublicSubnet2"
-      RouteTableId: !Ref "PublicRouteTable"
+      SubnetId: !Ref PublicSubnet2
+      RouteTableId: !Ref PublicRouteTable
 
-  # Out of scope
+  # [Out of scope]
   # Create an Elastic IP for the NAT Gateway
   # ElasticIP:
-  # Type: "AWS::EC2::EIP"
+  #   Type: "AWS::EC2::EIP"
 
-  # Out of scope
+  # [Out of scope]
   # Create the NAT Gateway in any one of the public subnets
   # NATGateway:
-  # Type: "AWS::EC2::NatGateway"
-  # Properties:
-  # AllocationId: !GetAtt "ElasticIP.AllocationId"
-  # SubnetId: !Ref "PublicSubnet1"
+  #   Type: "AWS::EC2::NatGateway"
+  #   Properties:
+  #     AllocationId: !GetAtt "ElasticIP.AllocationId"
+  #     SubnetId: !Ref "PublicSubnet1"
 
   # Create a private route table
   PrivateRouteTable:
-    Type: "AWS::EC2::RouteTable"
+    Type: AWS::EC2::RouteTable
     Properties:
-      VpcId: !Ref "VPC"
+      VpcId: !Ref VPC
 
-  # Out of scope
+  # [Out of scope]
   # Create a private route to NAT Gateway for outbound internet access
   # PrivateRoute:
-  # Type: "AWS::EC2::Route"
-  # Properties:
-  # RouteTableId: !Ref "PrivateRouteTable"
-  # DestinationCidrBlock: "0.0.0.0/0"
-  # NatGatewayId: !Ref "NatGateway"
+  #   Type: "AWS::EC2::Route"
+  #   Properties:
+  #     RouteTableId: !Ref "PrivateRouteTable"
+  #     DestinationCidrBlock: "0.0.0.0/0"
+  #     NatGatewayId: !Ref "NatGateway"
 
   # Create two private subnets
   PrivateSubnet1:
-    Type: "AWS::EC2::Subnet"
+    Type: AWS::EC2::Subnet
     Properties:
-      VpcId: !Ref "VPC"
-      CidrBlock: "10.0.3.0/24"
-      AvailabilityZone: !Select [0, !GetAZs ""] # Select the first availability zone
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.3.0/24
+      AvailabilityZone: !Select
+        - 0
+        - !GetAZs ""
+        # Select the first availability zone
       Tags:
         - Key: Name
-          Value: "PrivateSubnet1"
+          Value: PrivateSubnet1
 
   PrivateSubnet2:
-    Type: "AWS::EC2::Subnet"
+    Type: AWS::EC2::Subnet
     Properties:
-      VpcId: !Ref "VPC"
-      CidrBlock: "10.0.4.0/24"
-      AvailabilityZone: !Select [1, !GetAZs ""] # Select the second availability zone
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.4.0/24
+      AvailabilityZone: !Select
+        - 1
+        - !GetAZs ""
+        # Select the second availability zone
       Tags:
         - Key: Name
-          Value: "PrivateSubnet2"
+          Value: PrivateSubnet2
 
   # Associate private subnets with the private route table
   PrivateSubnet1RouteTableAssociation:
-    Type: "AWS::EC2::SubnetRouteTableAssociation"
+    Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
-      SubnetId: !Ref "PrivateSubnet1"
-      RouteTableId: !Ref "PrivateRouteTable"
+      SubnetId: !Ref PrivateSubnet1
+      RouteTableId: !Ref PrivateRouteTable
 
   PrivateSubnet2RouteTableAssociation:
-    Type: "AWS::EC2::SubnetRouteTableAssociation"
+    Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
-      SubnetId: !Ref "PrivateSubnet2"
-      RouteTableId: !Ref "PrivateRouteTable"
+      SubnetId: !Ref PrivateSubnet2
+      RouteTableId: !Ref PrivateRouteTable
+
+  # Create a security group for the EC2 instances
+  InstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow SSH access from within the VPC
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 10.0.0.0/16 # Allow SSH access within the VPC
+
+  # Create an IAM role for the EC2 instances
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: EC2InstanceRole
+      AssumeRolePolicyDocument:
+        Version: "2024-08-31"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEC2ReadOnlyAccess # Attach read-only policy for demo
+
+  # Create an instance profile to associate the IAM role with EC2 instances
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref InstanceRole
+
+  # Fetch a basic free-tier AMI provided by AWS
+  AMIID:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2 # the latest Amazon Linux 2 AMI ID
+      Type: String
+
+  # [Out of scope]
+  # Launch a single EC2 instance
+  # EC2Instance:
+  #   Type: "AWS::EC2::Instance"
+  #   Properties:
+  #     ImageId: !Ref AMIID # Use the AMI ID fetched from SSM Parameter or you own custom AMI
+  #     InstanceType: "t2.micro"
+  #     SubnetId: !Ref "PrivateSubnet1" # Place the instance in a private subnet
+  #     SecurityGroups:
+  #       - !Ref "InstanceSecurityGroup"
+  #     IamInstanceProfile: !Ref "InstanceProfile"
+
+  # Create a launch configuration for the Auto Scaling group
+  LaunchConfiguration:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties:
+      ImageId: !Ref AMIID # Use the AMI ID fetched from SSM Parameter or you own custom AMI
+      InstanceType: t2.micro
+      SecurityGroups:
+        - !Ref InstanceSecurityGroup
+      IamInstanceProfile: !Ref InstanceProfile
+
+  # Create an Auto Scaling group with two instances
+  AutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      LaunchConfigurationName: !Ref LaunchConfiguration
+      MinSize: "2" # Minimum of two instances
+      MaxSize: "2" # Maximum of two instances
+      DesiredCapacity: "2" # Desired number of instances
+      VPCZoneIdentifier:
+        # Place instances in private subnets
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      Tags:
+        - Key: Name
+          Value: AutoScalingInstance
+          PropagateAtLaunch: true
+
+  # [Out of scope]
+  # Create an Auto Scaling policy to manage scaling
+  # ScalingPolicy:
+  #   Type: AWS::AutoScaling::ScalingPolicy
+  #   Properties:
+  #     AutoScalingGroupName: !Ref AutoScalingGroup
+  #     PolicyName: ScaleOutPolicy
+  #     PolicyType: SimpleScaling
+  #     ScalingAdjustment: "1"
+  #     AdjustmentType: ChangeInCapacity
+  #     Cooldown: "300" # Cooldown period for scaling
 
 # Outputs values for easy reference
 Outputs:
@@ -183,21 +288,21 @@ Outputs:
       Name: !Sub ${AWS::StackName}-SecretAccessKey
 
   VPCId:
-    Description: "VPC ID"
-    Value: !Ref "VPC"
+    Description: VPC ID
+    Value: !Ref VPC
 
   PublicSubnet1Id:
-    Description: "Public Subnet 1 ID"
-    Value: !Ref "PublicSubnet1"
+    Description: Public Subnet 1 ID
+    Value: !Ref PublicSubnet1
 
   PublicSubnet2Id:
-    Description: "Public Subnet 2 ID"
-    Value: !Ref "PublicSubnet2"
+    Description: Public Subnet 2 ID
+    Value: !Ref PublicSubnet2
 
   PrivateSubnet1Id:
-    Description: "Private Subnet 1 ID"
-    Value: !Ref "PrivateSubnet1"
+    Description: Private Subnet 1 ID
+    Value: !Ref PrivateSubnet1
 
   PrivateSubnet2Id:
-    Description: "Private Subnet 2 ID"
-    Value: !Ref "PrivateSubnet2"
+    Description: Private Subnet 2 ID
+    Value: !Ref PrivateSubnet2
