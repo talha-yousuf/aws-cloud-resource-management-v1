@@ -1,8 +1,9 @@
-AWSTemplateFormatVersion: "2024-08-31"
+AWSTemplateFormatVersion: '2024-08-31'
 Description: CloudFormation template to, 1) create an IAM user with permissions
   to manage EC2, RDS, ElastiCache, and IAM resources, 2) create a VPC with
-  public and private subnets 3) Launch an Auto Scaling group with two EC2
-  instances in the private subnets
+  public and private subnets, 3) Launch an Auto Scaling group with two EC2
+  instances in the private subnets, 4) Create a RDS MySQL database instance in a
+  multi-AZ configurations
 
 Resources:
   # Creates an IAM user
@@ -23,7 +24,7 @@ Resources:
     Properties:
       PolicyName: demoPolicy
       PolicyDocument:
-        Version: "2024-08-31"
+        Version: '2024-08-31'
         Statement:
           - Effect: Allow
             Action:
@@ -31,7 +32,7 @@ Resources:
               - rds:*
               - elasticache:*
               - iam:*
-            Resource: "*"
+            Resource: '*'
       Users:
         - !Ref IAMUser
 
@@ -80,7 +81,7 @@ Resources:
       MapPublicIpOnLaunch: true # Automatically assign public IPs to instances launched in this subnet
       AvailabilityZone: !Select
         - 0
-        - !GetAZs ""
+        - !GetAZs ''
         # Select the first availability zone
       Tags:
         - Key: Name
@@ -94,7 +95,7 @@ Resources:
       MapPublicIpOnLaunch: true # Automatically assign public IPs to instances launched in this subnet
       AvailabilityZone: !Select
         - 1
-        - !GetAZs ""
+        - !GetAZs ''
         # Select the second availability zone
       Tags:
         - Key: Name
@@ -149,7 +150,7 @@ Resources:
       CidrBlock: 10.0.3.0/24
       AvailabilityZone: !Select
         - 0
-        - !GetAZs ""
+        - !GetAZs ''
         # Select the first availability zone
       Tags:
         - Key: Name
@@ -162,7 +163,7 @@ Resources:
       CidrBlock: 10.0.4.0/24
       AvailabilityZone: !Select
         - 1
-        - !GetAZs ""
+        - !GetAZs ''
         # Select the second availability zone
       Tags:
         - Key: Name
@@ -199,7 +200,7 @@ Resources:
     Properties:
       RoleName: EC2InstanceRole
       AssumeRolePolicyDocument:
-        Version: "2024-08-31"
+        Version: '2024-08-31'
         Statement:
           - Effect: Allow
             Principal:
@@ -249,9 +250,9 @@ Resources:
     Type: AWS::AutoScaling::AutoScalingGroup
     Properties:
       LaunchConfigurationName: !Ref LaunchConfiguration
-      MinSize: "2" # Minimum of two instances
-      MaxSize: "2" # Maximum of two instances
-      DesiredCapacity: "2" # Desired number of instances
+      MinSize: '2' # Minimum of two instances
+      MaxSize: '2' # Maximum of two instances
+      DesiredCapacity: '2' # Desired number of instances
       VPCZoneIdentifier:
         # Place instances in private subnets
         - !Ref PrivateSubnet1
@@ -272,6 +273,35 @@ Resources:
   #     ScalingAdjustment: "1"
   #     AdjustmentType: ChangeInCapacity
   #     Cooldown: "300" # Cooldown period for scaling
+
+  # Create a security group for the RDS instance
+  RDSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow access to RDS MySQL instance from within the VPC
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: 10.0.0.0/16
+
+  # Create the RDS MySQL database instance
+  RDSInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceClass: db.t2.micro
+      Engine: mysql
+      MasterUsername: admin
+      MasterUserPassword: password123
+      DBName: demoSqlDatabase
+      MultiAZ: true
+      AllocatedStorage: '2'
+      VPCSecurityGroups:
+        - !Ref RDSSecurityGroup
+      PubliclyAccessible: false
+      BackupRetentionPeriod: 1
+      # DeletionPolicy: Snapshot
 
 # Outputs values for easy reference
 Outputs:
@@ -306,3 +336,11 @@ Outputs:
   PrivateSubnet2Id:
     Description: Private Subnet 2 ID
     Value: !Ref PrivateSubnet2
+
+  RDSInstanceEndpoint:
+    Description: The endpoint of the RDS MySQL instance
+    Value: !GetAtt RDSInstance.Endpoint.Address
+
+  RDSInstancePort:
+    Description: The port of the RDS MySQL instance
+    Value: !GetAtt RDSInstance.Endpoint.Port
