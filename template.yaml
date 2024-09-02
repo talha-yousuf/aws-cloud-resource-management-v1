@@ -1,9 +1,5 @@
-AWSTemplateFormatVersion: '2024-08-31'
-Description: CloudFormation template to, 1) create an IAM user with permissions
-  to manage EC2, RDS, ElastiCache, and IAM resources, 2) create a VPC with
-  public and private subnets, 3) Launch an Auto Scaling group with two EC2
-  instances in the private subnets, 4) Create a RDS MySQL database instance in a
-  multi-AZ configurations
+AWSTemplateFormatVersion: '2010-09-09'
+Description: CloudFormation template to provision proof-of-concept of a secure and scalable AWS infrastructure
 
 Resources:
   # Creates an IAM user
@@ -24,7 +20,7 @@ Resources:
     Properties:
       PolicyName: demoPolicy
       PolicyDocument:
-        Version: '2024-08-31'
+        Version: '2010-09-09'
         Statement:
           - Effect: Allow
             Action:
@@ -127,11 +123,12 @@ Resources:
   #     AllocationId: !GetAtt "ElasticIP.AllocationId"
   #     SubnetId: !Ref "PublicSubnet1"
 
+  # [Out of scope]
   # Create a private route table
-  PrivateRouteTable:
-    Type: AWS::EC2::RouteTable
-    Properties:
-      VpcId: !Ref VPC
+  # PrivateRouteTable:
+  #   Type: AWS::EC2::RouteTable
+  #   Properties:
+  #     VpcId: !Ref VPC
 
   # [Out of scope]
   # Create a private route to NAT Gateway for outbound internet access
@@ -169,38 +166,39 @@ Resources:
         - Key: Name
           Value: PrivateSubnet2
 
+  # [Out of scope]
   # Associate private subnets with the private route table
-  PrivateSubnet1RouteTableAssociation:
-    Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties:
-      SubnetId: !Ref PrivateSubnet1
-      RouteTableId: !Ref PrivateRouteTable
+  # PrivateSubnet1RouteTableAssociation:
+  #   Type: AWS::EC2::SubnetRouteTableAssociation
+  #   Properties:
+  #     SubnetId: !Ref PrivateSubnet1
+  #     RouteTableId: !Ref PrivateRouteTable
 
-  PrivateSubnet2RouteTableAssociation:
-    Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties:
-      SubnetId: !Ref PrivateSubnet2
-      RouteTableId: !Ref PrivateRouteTable
+  # PrivateSubnet2RouteTableAssociation:
+  #   Type: AWS::EC2::SubnetRouteTableAssociation
+  #   Properties:
+  #     SubnetId: !Ref PrivateSubnet2
+  #     RouteTableId: !Ref PrivateRouteTable
 
   # Create a security group for the EC2 instances
-  InstanceSecurityGroup:
+  EC2InstanceSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Allow SSH access from within the VPC
+      GroupDescription: Confine access to EC2 Instances to within the VPC
       VpcId: !Ref VPC
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 22
           ToPort: 22
-          CidrIp: 10.0.0.0/16 # Allow SSH access within the VPC
+          CidrIp: 10.0.0.0/16
 
   # Create an IAM role for the EC2 instances
-  InstanceRole:
+  EC2InstanceRole:
     Type: AWS::IAM::Role
     Properties:
       RoleName: EC2InstanceRole
       AssumeRolePolicyDocument:
-        Version: '2024-08-31'
+        Version: '2010-09-09'
         Statement:
           - Effect: Allow
             Principal:
@@ -210,11 +208,11 @@ Resources:
         - arn:aws:iam::aws:policy/AmazonEC2ReadOnlyAccess # Attach read-only policy for demo
 
   # Create an instance profile to associate the IAM role with EC2 instances
-  InstanceProfile:
+  EC2InstanceProfile:
     Type: AWS::IAM::InstanceProfile
     Properties:
       Roles:
-        - !Ref InstanceRole
+        - !Ref EC2InstanceRole
 
   # Fetch a basic free-tier AMI provided by AWS
   AMIID:
@@ -232,8 +230,8 @@ Resources:
   #     InstanceType: "t2.micro"
   #     SubnetId: !Ref "PrivateSubnet1" # Place the instance in a private subnet
   #     SecurityGroups:
-  #       - !Ref "InstanceSecurityGroup"
-  #     IamInstanceProfile: !Ref "InstanceProfile"
+  #       - !Ref "EC2InstanceSecurityGroup"
+  #     IamInstanceProfile: !Ref "EC2InstanceProfile"
 
   # Create a launch configuration for the Auto Scaling group
   LaunchConfiguration:
@@ -242,8 +240,8 @@ Resources:
       ImageId: !Ref AMIID # Use the AMI ID fetched from SSM Parameter or you own custom AMI
       InstanceType: t2.micro
       SecurityGroups:
-        - !Ref InstanceSecurityGroup
-      IamInstanceProfile: !Ref InstanceProfile
+        - !Ref EC2InstanceSecurityGroup
+      IamInstanceProfile: !Ref EC2InstanceProfile
 
   # Create an Auto Scaling group with two instances
   AutoScalingGroup:
@@ -278,7 +276,7 @@ Resources:
   RDSSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Allow access to RDS MySQL instance from within the VPC
+      GroupDescription: Confine access to RDS MySQL instance to within the VPC
       VpcId: !Ref VPC
       SecurityGroupIngress:
         - IpProtocol: tcp
@@ -301,9 +299,39 @@ Resources:
         - !Ref RDSSecurityGroup
       PubliclyAccessible: false
       BackupRetentionPeriod: 1
-      # DeletionPolicy: Snapshot
 
-# Outputs values for easy reference
+  # Create a Security Group for ElastiCache
+  ElastiCacheSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Confine access to ElastiCache Redis Cluster to within the VPC
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 6379
+          ToPort: 6379
+          CidrIp: 10.0.0.0/16
+
+  # Create an ElastiCache Subnet Group
+  ElastiCacheSubnetGroup:
+    Type: AWS::ElastiCache::SubnetGroup
+    Properties:
+      Description: Subnet group for ElastiCache
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+
+  # Create an ElastiCache Redis Cluster with multiple nodes
+  ElastiCacheCluster:
+    Type: AWS::ElastiCache::CacheCluster
+    Properties:
+      Engine: redis
+      CacheNodeType: cache.t2.micro
+      NumCacheNodes: 1 # 2 nodes will likely exceed free tier
+      CacheSubnetGroupName: !Ref ElastiCacheSubnetGroup
+      VpcSecurityGroupIds:
+        - !Ref ElastiCacheSecurityGroup
+
 Outputs:
   AccessKeyId:
     Description: Access Key ID
