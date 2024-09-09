@@ -208,7 +208,9 @@ Resources:
       LaunchTemplateData:
         ImageId: !Ref LatestAmiId
         InstanceType: t2.micro
-        KeyName: demoAutoScalingTemplateData
+        # Create key-pair manaully before-hand
+        # aws ec2 create-key-pair --key-name demoAutoScalingKeyPair --query 'KeyMaterial' --output text > demoAutoScalingKeyPair.pem
+        KeyName: demoAutoScalingKeyPair
         NetworkInterfaces:
           - DeviceIndex: 0
             AssociatePublicIpAddress: true
