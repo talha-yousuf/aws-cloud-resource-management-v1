@@ -332,3 +332,7 @@ Outputs:
   EC2InstanceSecurityGroup:
     Description: Security group with ingress rule
     Value: !Ref EC2InstanceSecurityGroup
+
+  LoadBalancerDNSName:
+    Description: The DNS name of the load balancer
+    Value: !GetAtt LB.DNSName
