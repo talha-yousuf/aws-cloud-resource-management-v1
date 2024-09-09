@@ -184,12 +184,16 @@ Resources:
   EC2InstanceSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Confine access to EC2 Instances to within the VPC
+      GroupDescription: Confine access to EC2 Instances to within the VPC and allow HTTP traffic
       VpcId: !Ref VPC
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 22
           ToPort: 22
+          CidrIp: 10.0.0.0/16
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
           CidrIp: 10.0.0.0/16
 
   # Create an IAM role for the EC2 instances
@@ -216,10 +220,63 @@ Resources:
 
   # Fetch a basic free-tier AMI provided by AWS
   AMIID:
-    Type: AWS::SSM::Parameter
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2 # the latest Amazon Linux 2 AMI ID
+
+  # Create a Load Balance Security Group
+  LoadBalancerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
     Properties:
-      Name: /aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2 # the latest Amazon Linux 2 AMI ID
-      Type: String
+      GroupDescription: Allow inbound traffic on port 80 for the Load Balancer
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+
+  # Create a Load Balancer
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: demoLoadBalancer
+      Subnets:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+      SecurityGroups:
+        - !Ref LoadBalancerSecurityGroup
+      Scheme: internet-facing
+      LoadBalancerAttributes:
+        - Key: idle_timeout.timeout_seconds
+          Value: '60'
+        - Key: deletion_protection.enabled
+          Value: 'false'
+
+  # Create a Target Group
+  LoadBalancerTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Port: 80
+      Protocol: HTTP
+      VpcId: !Ref VPC
+      HealthCheckProtocol: HTTP
+      HealthCheckPath: /
+      Matcher:
+        HttpCode: '200'
+
+  # Create a Listener for the Load Balancer
+  LoadBalancerListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: fixed-response
+          FixedResponseConfig:
+            StatusCode: '200'
+            ContentType: text/plain
+            MessageBody: 'OK'
+      LoadBalancerArn: !Ref LoadBalancer
+      Port: 80
+      Protocol: HTTP
 
   # [Out of scope]
   # Launch a single EC2 instance
@@ -237,24 +294,43 @@ Resources:
   LaunchConfiguration:
     Type: AWS::AutoScaling::LaunchConfiguration
     Properties:
-      ImageId: !Ref AMIID # Use the AMI ID fetched from SSM Parameter or you own custom AMI
+      ImageId: !Ref AMIID # Use the AMI ID fetched from SSM Parameter or your own custom AMI
       InstanceType: t2.micro
       SecurityGroups:
         - !Ref EC2InstanceSecurityGroup
       IamInstanceProfile: !Ref EC2InstanceProfile
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+
+          # Install updates and dependencies
+          yum update -y
+          yum install -y ruby wget
+
+          # Install the CodeDeploy agent
+          cd /home/ec2-user
+          wget https://aws-codedeploy-us-east-1.s3.amazonaws.com/latest/install
+          chmod +x ./install
+          ./install auto
+
+          # Start the CodeDeploy agent
+          systemctl start codedeploy-agent
+          systemctl enable codedeploy-agent
 
   # Create an Auto Scaling group with two instances
   AutoScalingGroup:
     Type: AWS::AutoScaling::AutoScalingGroup
     Properties:
       LaunchConfigurationName: !Ref LaunchConfiguration
-      MinSize: '2' # Minimum of two instances
-      MaxSize: '2' # Maximum of two instances
-      DesiredCapacity: '2' # Desired number of instances
+      MinSize: '2'
+      MaxSize: '2'
+      DesiredCapacity: '2'
       VPCZoneIdentifier:
         # Place instances in private subnets
         - !Ref PrivateSubnet1
         - !Ref PrivateSubnet2
+      TargetGroupARNs:
+        - !Ref LoadBalancerTargetGroup
       Tags:
         - Key: Name
           Value: AutoScalingInstance
@@ -290,15 +366,15 @@ Resources:
     Properties:
       DBInstanceClass: db.t2.micro
       Engine: mysql
-      MasterUsername: admin
-      MasterUserPassword: password123
-      DBName: demoSqlDatabase
-      MultiAZ: true
+      MasterUsername: adminUsername
+      MasterUserPassword: adminPassword
+      DBName: demoDatabase
+      # MultiAZ: true # may not stay within free tier if enabled 
       AllocatedStorage: '2'
       VPCSecurityGroups:
         - !Ref RDSSecurityGroup
       PubliclyAccessible: false
-      BackupRetentionPeriod: 1
+      BackupRetentionPeriod: 0
 
   # Create a Security Group for ElastiCache
   ElastiCacheSecurityGroup:
@@ -331,6 +407,53 @@ Resources:
       CacheSubnetGroupName: !Ref ElastiCacheSubnetGroup
       VpcSecurityGroupIds:
         - !Ref ElastiCacheSecurityGroup
+
+  # Add a CodeDeploy service role
+  CodeDeployServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: demoCodeDeployServiceRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codedeploy.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSCodeDeployRole
+
+  # CodeDeploy Application
+  CodeDeployApplication:
+    Type: AWS::CodeDeploy::Application
+    Properties:
+      ComputePlatform: Server
+
+  # CodeDeploy Deployment Group
+  CodeDeployDeploymentGroup:
+    Type: AWS::CodeDeploy::DeploymentGroup
+    Properties:
+      ApplicationName: !Ref CodeDeployApplication
+      ServiceRoleArn: !GetAtt CodeDeployServiceRole.Arn
+      AutoScalingGroups:
+        - !Ref AutoScalingGroup
+      DeploymentStyle:
+        DeploymentType: IN_PLACE
+        DeploymentOption: WITH_TRAFFIC_CONTROL
+
+  # CodeDeploy Deployment
+  CodeDeployDeployment:
+    Type: AWS::CodeDeploy::Deployment
+    Properties:
+      ApplicationName: !Ref CodeDeployApplication
+      DeploymentGroupName: !Ref CodeDeployDeploymentGroup
+      DeploymentConfigName: CodeDeployDefault.AllAtOnce
+      Revision:
+        RevisionType: S3
+        S3Revision:
+          Bucket: demoBucket
+          Key: demo-app.tar.gz
+          BundleType: tar
 
 Outputs:
   AccessKeyId:
@@ -365,10 +488,29 @@ Outputs:
     Description: Private Subnet 2 ID
     Value: !Ref PrivateSubnet2
 
-  RDSInstanceEndpoint:
-    Description: The endpoint of the RDS MySQL instance
+  RDSHostname:
+    Description: The hostname of the RDS instance
     Value: !GetAtt RDSInstance.Endpoint.Address
 
-  RDSInstancePort:
-    Description: The port of the RDS MySQL instance
-    Value: !GetAtt RDSInstance.Endpoint.Port
+  RDSUsername:
+    Description: The username for the RDS instance
+    Value: !Ref RDSInstance.MasterUsername
+
+  RDSPassword:
+    Description: The password for the RDS instance
+    Value: adminPassword
+    NoEcho: true
+
+  RDSDBName:
+    Description: The database name for the RDS instance
+    Value: !Ref RDSInstance.DBName
+
+  RedisHostname:
+    Description: The hostname of the ElastiCache Redis instance
+    Value: !GetAtt ElastiCacheCluster.ConfigurationEndpoint.Address
+
+  DeploymentGroupName:
+    Description: CodeDeploy Deployment Group Name
+    Value: !Ref CodeDeployDeploymentGroup
+    Export:
+      Name: !Sub ${AWS::StackName}-DeploymentGroup
