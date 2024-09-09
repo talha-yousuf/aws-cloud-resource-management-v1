@@ -4,5 +4,12 @@
   },
   "yaml.format.singleQuote": true,
   "yaml.completion": true,
-  "yaml.customTags": ["!Ref", "!Sub", "!GetAtt", "!GetAZs", "!Select sequence"]
+  "yaml.customTags": [
+    "!Ref",
+    "!Sub",
+    "!GetAtt",
+    "!GetAZs",
+    "!Select sequence",
+    "!Join sequence"
+  ]
 }

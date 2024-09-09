@@ -2,6 +2,12 @@ AWSTemplateFormatVersion: '2010-09-09'
 Description: CloudFormation template to provision a secure and scalable AWS
   infrastructure for a NodeJS app.
 
+Parameters:
+  # Fetch a basic free-tier AMI provided by AWS
+  LatestAmiId:
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2'
+
 Resources:
   # ----------------------------------------------------------------
   # IAM USERS, GROUPS AND ROLES
@@ -172,3 +178,155 @@ Resources:
     Properties:
       SubnetId: !Ref PublicSubnet2
       RouteTableId: !Ref PublicRouteTable
+
+  # ----------------------------------------------------------------
+  # EC2, AUTOSCALING AND LOAD_BALANCER
+  # ----------------------------------------------------------------
+
+  # Create a security group for the EC2 instances
+  EC2InstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: demoEC2InstanceSecurityGroup
+      GroupDescription: 'Allow SSH and HTTP'
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+
+  # Template for Auto-scaling Group
+  AutoScalingLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: demoAutoScalingTemplate
+      LaunchTemplateData:
+        ImageId: !Ref LatestAmiId
+        InstanceType: t2.micro
+        KeyName: demoAutoScalingTemplateData
+        NetworkInterfaces:
+          - DeviceIndex: 0
+            AssociatePublicIpAddress: true
+            Groups:
+              - !Ref EC2InstanceSecurityGroup
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            # Update all system packages to their latest versions
+            yum update -y
+            # Install the Extra Packages for Enterprise Linux repository for additional packages
+            amazon-linux-extras install epel -y
+            # Install the Apache web server
+            yum install -y httpd
+            # Start the Apache web server
+            systemctl start httpd
+            # Enable Apache to automatically start at boot
+            systemctl enable httpd
+            # Install the 'stress' tool, used for testing the server under heavy load
+            yum install stress -y
+            # Create a simple HTML file with a demo message and save it to the default web directory for Apache
+            echo '<center><h1>Demo Cloud Formation Project</h1></center>' > /var/www/html/index.html
+
+  # Create AutoScaling Group
+  AutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      MinSize: '2'
+      MaxSize: '2'
+      DesiredCapacity: '2'
+      LaunchTemplate:
+        LaunchTemplateId: !Ref AutoScalingLaunchTemplate
+        Version: !GetAtt AutoScalingLaunchTemplate.LatestVersionNumber
+      HealthCheckType: ELB
+      VPCZoneIdentifier:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+      TargetGroupARNs:
+        - !Ref LBTargetGroup
+
+  # Policy used to track CPU usage for Auto Scaling
+  cpuUsage:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AutoScalingGroupName: !Ref AutoScalingGroup
+      PolicyType: TargetTrackingScaling
+      # This scaling policy adjusts capacity based on target tracking metrics
+      TargetTrackingConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ASGAverageCPUUtilization
+          # Track the average CPU utilization of the Auto Scaling group
+        TargetValue: 50
+        # Target value for the average CPU utilization is set to 50%
+        # The Auto Scaling group will scale up or down to maintain CPU usage around this threshold
+
+  # Create LB Targetgroup
+  LBTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId: !Ref VPC
+      TargetType: instance
+      HealthCheckPath: /index.html
+      Port: 80
+      Protocol: HTTP
+      Tags:
+        - Key: Name
+          Value: demoLBTargetGroup
+
+  # Create LB
+  LB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Type: application
+      Scheme: internet-facing
+      SecurityGroups:
+        - !Ref EC2InstanceSecurityGroup
+      Subnets:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+      Tags:
+        - Key: Name
+          Value: demoLB
+      LoadBalancerAttributes:
+        - Key: idle_timeout.timeout_seconds
+          Value: '60'
+
+  # Create LB listener
+  LBlistener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      Protocol: HTTP
+      Port: 80
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref LBTargetGroup
+      LoadBalancerArn: !Ref LB
+
+Outputs:
+  VPC:
+    Description: A reference to the created VPC
+    Value: !Ref VPC
+
+  PublicSubnet1:
+    Description: A reference to the public subnet in the 1st Availability Zone
+    Value: !Ref PublicSubnet1
+
+  PublicSubnet2:
+    Description: A reference to the public subnet in the 2nd Availability Zone
+    Value: !Ref PublicSubnet2
+
+  PrivateSubnet1:
+    Description: A reference to the private subnet in the 1st Availability Zone
+    Value: !Ref PrivateSubnet1
+
+  PrivateSubnet2:
+    Description: A reference to the private subnet in the 2nd Availability Zone
+    Value: !Ref PrivateSubnet2
+
+  EC2InstanceSecurityGroup:
+    Description: Security group with ingress rule
+    Value: !Ref EC2InstanceSecurityGroup
