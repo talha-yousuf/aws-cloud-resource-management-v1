@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: CloudFormation template to provision proof-of-concept of a secure and scalable AWS infrastructure
+Description: CloudFormation template to provision a secure and scalable AWS infrastructure for a nodeJS app
 
 Resources:
   # Creates an IAM user
@@ -81,7 +81,7 @@ Resources:
         # Select the first availability zone
       Tags:
         - Key: Name
-          Value: PublicSubnet1
+          Value: demoPublicSubnet1
 
   PublicSubnet2:
     Type: AWS::EC2::Subnet
@@ -95,7 +95,7 @@ Resources:
         # Select the second availability zone
       Tags:
         - Key: Name
-          Value: PublicSubnet2
+          Value: demoPublicSubnet2
 
   # Associate public subnets with the public route table
   PublicSubnet1RouteTableAssociation:
@@ -110,35 +110,6 @@ Resources:
       SubnetId: !Ref PublicSubnet2
       RouteTableId: !Ref PublicRouteTable
 
-  # [Out of scope]
-  # Create an Elastic IP for the NAT Gateway
-  # ElasticIP:
-  #   Type: "AWS::EC2::EIP"
-
-  # [Out of scope]
-  # Create the NAT Gateway in any one of the public subnets
-  # NATGateway:
-  #   Type: "AWS::EC2::NatGateway"
-  #   Properties:
-  #     AllocationId: !GetAtt "ElasticIP.AllocationId"
-  #     SubnetId: !Ref "PublicSubnet1"
-
-  # [Out of scope]
-  # Create a private route table
-  # PrivateRouteTable:
-  #   Type: AWS::EC2::RouteTable
-  #   Properties:
-  #     VpcId: !Ref VPC
-
-  # [Out of scope]
-  # Create a private route to NAT Gateway for outbound internet access
-  # PrivateRoute:
-  #   Type: "AWS::EC2::Route"
-  #   Properties:
-  #     RouteTableId: !Ref "PrivateRouteTable"
-  #     DestinationCidrBlock: "0.0.0.0/0"
-  #     NatGatewayId: !Ref "NatGateway"
-
   # Create two private subnets
   PrivateSubnet1:
     Type: AWS::EC2::Subnet
@@ -151,7 +122,7 @@ Resources:
         # Select the first availability zone
       Tags:
         - Key: Name
-          Value: PrivateSubnet1
+          Value: demoPrivateSubnet1
 
   PrivateSubnet2:
     Type: AWS::EC2::Subnet
@@ -164,21 +135,7 @@ Resources:
         # Select the second availability zone
       Tags:
         - Key: Name
-          Value: PrivateSubnet2
-
-  # [Out of scope]
-  # Associate private subnets with the private route table
-  # PrivateSubnet1RouteTableAssociation:
-  #   Type: AWS::EC2::SubnetRouteTableAssociation
-  #   Properties:
-  #     SubnetId: !Ref PrivateSubnet1
-  #     RouteTableId: !Ref PrivateRouteTable
-
-  # PrivateSubnet2RouteTableAssociation:
-  #   Type: AWS::EC2::SubnetRouteTableAssociation
-  #   Properties:
-  #     SubnetId: !Ref PrivateSubnet2
-  #     RouteTableId: !Ref PrivateRouteTable
+          Value: demoPrivateSubnet2
 
   # Create a security group for the EC2 instances
   EC2InstanceSecurityGroup:
@@ -200,7 +157,7 @@ Resources:
   EC2InstanceRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: EC2InstanceRole
+      RoleName: demoEC2InstanceRole
       AssumeRolePolicyDocument:
         Version: '2010-09-09'
         Statement:
@@ -278,18 +235,6 @@ Resources:
       Port: 80
       Protocol: HTTP
 
-  # [Out of scope]
-  # Launch a single EC2 instance
-  # EC2Instance:
-  #   Type: "AWS::EC2::Instance"
-  #   Properties:
-  #     ImageId: !Ref AMIID # Use the AMI ID fetched from SSM Parameter or you own custom AMI
-  #     InstanceType: "t2.micro"
-  #     SubnetId: !Ref "PrivateSubnet1" # Place the instance in a private subnet
-  #     SecurityGroups:
-  #       - !Ref "EC2InstanceSecurityGroup"
-  #     IamInstanceProfile: !Ref "EC2InstanceProfile"
-
   # Create a launch configuration for the Auto Scaling group
   LaunchConfiguration:
     Type: AWS::AutoScaling::LaunchConfiguration
@@ -299,23 +244,6 @@ Resources:
       SecurityGroups:
         - !Ref EC2InstanceSecurityGroup
       IamInstanceProfile: !Ref EC2InstanceProfile
-      UserData:
-        Fn::Base64: !Sub |
-          #!/bin/bash
-
-          # Install updates and dependencies
-          yum update -y
-          yum install -y ruby wget
-
-          # Install the CodeDeploy agent
-          cd /home/ec2-user
-          wget https://aws-codedeploy-us-east-1.s3.amazonaws.com/latest/install
-          chmod +x ./install
-          ./install auto
-
-          # Start the CodeDeploy agent
-          systemctl start codedeploy-agent
-          systemctl enable codedeploy-agent
 
   # Create an Auto Scaling group with two instances
   AutoScalingGroup:
@@ -333,20 +261,8 @@ Resources:
         - !Ref LoadBalancerTargetGroup
       Tags:
         - Key: Name
-          Value: AutoScalingInstance
+          Value: demoAutoScalingInstance
           PropagateAtLaunch: true
-
-  # [Out of scope]
-  # Create an Auto Scaling policy to manage scaling
-  # ScalingPolicy:
-  #   Type: AWS::AutoScaling::ScalingPolicy
-  #   Properties:
-  #     AutoScalingGroupName: !Ref AutoScalingGroup
-  #     PolicyName: ScaleOutPolicy
-  #     PolicyType: SimpleScaling
-  #     ScalingAdjustment: "1"
-  #     AdjustmentType: ChangeInCapacity
-  #     Cooldown: "300" # Cooldown period for scaling
 
   # Create a security group for the RDS instance
   RDSSecurityGroup:
@@ -369,12 +285,12 @@ Resources:
       MasterUsername: adminUsername
       MasterUserPassword: adminPassword
       DBName: demoDatabase
-      # MultiAZ: true # may not stay within free tier if enabled 
-      AllocatedStorage: '2'
+      # MultiAZ: true # disabled to avoid going over free tier
+      AllocatedStorage: 1
       VPCSecurityGroups:
         - !Ref RDSSecurityGroup
       PubliclyAccessible: false
-      BackupRetentionPeriod: 0
+      BackupRetentionPeriod: 0 # disabled to avoid going over free tier
 
   # Create a Security Group for ElastiCache
   ElastiCacheSecurityGroup:
@@ -403,103 +319,15 @@ Resources:
     Properties:
       Engine: redis
       CacheNodeType: cache.t2.micro
-      NumCacheNodes: 1 # 2 nodes will likely exceed free tier
+      NumCacheNodes: 1 # 2 nodes could likely exceed free tier
       CacheSubnetGroupName: !Ref ElastiCacheSubnetGroup
       VpcSecurityGroupIds:
         - !Ref ElastiCacheSecurityGroup
 
-  # Add a CodeDeploy service role
-  CodeDeployServiceRole:
-    Type: AWS::IAM::Role
-    Properties:
-      RoleName: demoCodeDeployServiceRole
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: codedeploy.amazonaws.com
-            Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AWSCodeDeployRole
-
-  # CodeDeploy Application
-  CodeDeployApplication:
-    Type: AWS::CodeDeploy::Application
-    Properties:
-      ComputePlatform: Server
-
-  # CodeDeploy Deployment Group
-  CodeDeployDeploymentGroup:
-    Type: AWS::CodeDeploy::DeploymentGroup
-    Properties:
-      ApplicationName: !Ref CodeDeployApplication
-      ServiceRoleArn: !GetAtt CodeDeployServiceRole.Arn
-      AutoScalingGroups:
-        - !Ref AutoScalingGroup
-      DeploymentStyle:
-        DeploymentType: IN_PLACE
-        DeploymentOption: WITH_TRAFFIC_CONTROL
-
-  # CodeDeploy Deployment
-  CodeDeployDeployment:
-    Type: AWS::CodeDeploy::Deployment
-    Properties:
-      ApplicationName: !Ref CodeDeployApplication
-      DeploymentGroupName: !Ref CodeDeployDeploymentGroup
-      DeploymentConfigName: CodeDeployDefault.AllAtOnce
-      Revision:
-        RevisionType: S3
-        S3Revision:
-          Bucket: demoBucket
-          Key: demo-app.tar.gz
-          BundleType: tar
-
 Outputs:
-  AccessKeyId:
-    Description: Access Key ID
-    Value: !Ref IAMUserAccessKey
-    Export:
-      Name: !Sub ${AWS::StackName}-AccessKeyId
-
-  SecretAccessKey:
-    Description: Secret Access Key
-    Value: !GetAtt IAMUserAccessKey.SecretAccessKey
-    Export:
-      Name: !Sub ${AWS::StackName}-SecretAccessKey
-
-  VPCId:
-    Description: VPC ID
-    Value: !Ref VPC
-
-  PublicSubnet1Id:
-    Description: Public Subnet 1 ID
-    Value: !Ref PublicSubnet1
-
-  PublicSubnet2Id:
-    Description: Public Subnet 2 ID
-    Value: !Ref PublicSubnet2
-
-  PrivateSubnet1Id:
-    Description: Private Subnet 1 ID
-    Value: !Ref PrivateSubnet1
-
-  PrivateSubnet2Id:
-    Description: Private Subnet 2 ID
-    Value: !Ref PrivateSubnet2
-
   RDSHostname:
     Description: The hostname of the RDS instance
     Value: !GetAtt RDSInstance.Endpoint.Address
-
-  RDSUsername:
-    Description: The username for the RDS instance
-    Value: !Ref RDSInstance.MasterUsername
-
-  RDSPassword:
-    Description: The password for the RDS instance
-    Value: adminPassword
-    NoEcho: true
 
   RDSDBName:
     Description: The database name for the RDS instance
@@ -508,9 +336,3 @@ Outputs:
   RedisHostname:
     Description: The hostname of the ElastiCache Redis instance
     Value: !GetAtt ElastiCacheCluster.ConfigurationEndpoint.Address
-
-  DeploymentGroupName:
-    Description: CodeDeploy Deployment Group Name
-    Value: !Ref CodeDeployDeploymentGroup
-    Export:
-      Name: !Sub ${AWS::StackName}-DeploymentGroup
