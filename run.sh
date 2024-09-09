@@ -11,7 +11,7 @@ show_menu() {
     echo "2 - Create Stack"
     echo "3 - Update Stack"
     echo "4 - Delete Stack"
-    echo "5 - Get Stack Outputs"
+    echo "5 - List Stack Outputs"
     echo "6 - List Stacks"
 }
 
