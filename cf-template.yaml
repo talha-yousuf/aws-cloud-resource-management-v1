@@ -1,0 +1,174 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: CloudFormation template to provision a secure and scalable AWS
+  infrastructure for a NodeJS app.
+
+Resources:
+  # ----------------------------------------------------------------
+  # IAM USERS, GROUPS AND ROLES
+  # ----------------------------------------------------------------
+
+  # Creates an IAM user
+  IAMUser:
+    Type: AWS::IAM::User
+    Properties:
+      UserName: demoUser
+
+  # Creates a managed policy for the required permissions
+  IAMManagedPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - ec2:*
+              - rds:*
+              - elasticache:*
+            Resource: '*'
+      Description: Managed policy for EC2, RDS, ElastiCache access
+
+  # Creates an IAM group
+  IAMGroup:
+    Type: AWS::IAM::Group
+    Properties:
+      GroupName: demoGroup
+      ManagedPolicyArns:
+        - !Ref IAMManagedPolicy
+
+  # Adds the user to the group
+  AddUserToGroup:
+    Type: AWS::IAM::UserToGroupAddition
+    Properties:
+      GroupName: !Ref IAMGroup
+      Users:
+        - !Ref IAMUser
+
+  # Creates an IAM role for accessing services programmatically
+  IAMUserRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Sub arn:aws:iam::${AWS::AccountId}:user/demoUser
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Ref IAMManagedPolicy
+
+  # Generates an access key for the role (not for user directly)
+  IAMUserAccessKey:
+    Type: AWS::IAM::AccessKey
+    Properties:
+      UserName: !Ref IAMUser
+
+  # ----------------------------------------------------------------
+  # VPC AND SUBNETS
+  # ----------------------------------------------------------------
+
+  # Create the VPC
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: demoCustomVPC
+
+  # Create an Internet Gateway for public internet access
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  # Attach the Internet Gateway to the VPC
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  # Create two private subnets
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.3.0/24
+      AvailabilityZone: !Select
+        - 0
+        - !GetAZs ''
+        # Select the first availability zone
+      Tags:
+        - Key: Name
+          Value: demoPrivateSubnet1
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.4.0/24
+      AvailabilityZone: !Select
+        - 1
+        - !GetAZs ''
+        # Select the second availability zone
+      Tags:
+        - Key: Name
+          Value: demoPrivateSubnet2
+
+  # Create a public route table
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+
+  # Create a public route to the Internet Gateway
+  PublicRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  # Create two public subnets
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.1.0/24
+      MapPublicIpOnLaunch: true # Automatically assign public IPs to instances launched in this subnet
+      AvailabilityZone: !Select
+        - 0
+        - !GetAZs ''
+        # Select the first availability zone
+      Tags:
+        - Key: Name
+          Value: demoPublicSubnet1
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.2.0/24
+      MapPublicIpOnLaunch: true # Automatically assign public IPs to instances launched in this subnet
+      AvailabilityZone: !Select
+        - 1
+        - !GetAZs ''
+        # Select the second availability zone
+      Tags:
+        - Key: Name
+          Value: demoPublicSubnet2
+
+  # Associate public subnets with the public route table
+  PublicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet2
+      RouteTableId: !Ref PublicRouteTable

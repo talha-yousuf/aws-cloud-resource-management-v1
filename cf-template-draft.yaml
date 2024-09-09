@@ -1,143 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: CloudFormation template to provision a secure and scalable AWS
-  infrastructure for a nodeJS app
 
 Resources:
-  # Creates an IAM user
-  IAMUser:
-    Type: AWS::IAM::User
-    Properties:
-      UserName: demoUser
-
-  # Generates an access key for the user, enabling programmatic access
-  IAMUserAccessKey:
-    Type: AWS::IAM::AccessKey
-    Properties:
-      UserName: !Ref IAMUser
-
-  # Attaches a policy to the user that grants full access to EC2, RDS, ElastiCache, and IAM resources
-  IAMUserPolicy:
-    Type: AWS::IAM::Policy
-    Properties:
-      PolicyName: demoPolicy
-      PolicyDocument:
-        Version: '2010-09-09'
-        Statement:
-          - Effect: Allow
-            Action:
-              - ec2:*
-              - rds:*
-              - elasticache:*
-              - iam:*
-            Resource: '*'
-      Users:
-        - !Ref IAMUser
-
-  # Create the VPC
-  VPC:
-    Type: AWS::EC2::VPC
-    Properties:
-      CidrBlock: 10.0.0.0/16
-      EnableDnsSupport: true
-      EnableDnsHostnames: true
-      Tags:
-        - Key: Name
-          Value: demoCustomVPC
-
-  # Create an Internet Gateway for public internet access
-  InternetGateway:
-    Type: AWS::EC2::InternetGateway
-
-  # Attach the Internet Gateway to the VPC
-  AttachGateway:
-    Type: AWS::EC2::VPCGatewayAttachment
-    Properties:
-      VpcId: !Ref VPC
-      InternetGatewayId: !Ref InternetGateway
-
-  # Create a public route table
-  PublicRouteTable:
-    Type: AWS::EC2::RouteTable
-    Properties:
-      VpcId: !Ref VPC
-
-  # Create a public route to the Internet Gateway
-  PublicRoute:
-    Type: AWS::EC2::Route
-    Properties:
-      RouteTableId: !Ref PublicRouteTable
-      DestinationCidrBlock: 0.0.0.0/0
-      GatewayId: !Ref InternetGateway
-
-  # Create two public subnets
-  PublicSubnet1:
-    Type: AWS::EC2::Subnet
-    Properties:
-      VpcId: !Ref VPC
-      CidrBlock: 10.0.1.0/24
-      MapPublicIpOnLaunch: true # Automatically assign public IPs to instances launched in this subnet
-      AvailabilityZone: !Select
-        - 0
-        - !GetAZs ''
-        # Select the first availability zone
-      Tags:
-        - Key: Name
-          Value: demoPublicSubnet1
-
-  PublicSubnet2:
-    Type: AWS::EC2::Subnet
-    Properties:
-      VpcId: !Ref VPC
-      CidrBlock: 10.0.2.0/24
-      MapPublicIpOnLaunch: true # Automatically assign public IPs to instances launched in this subnet
-      AvailabilityZone: !Select
-        - 1
-        - !GetAZs ''
-        # Select the second availability zone
-      Tags:
-        - Key: Name
-          Value: demoPublicSubnet2
-
-  # Associate public subnets with the public route table
-  PublicSubnet1RouteTableAssociation:
-    Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties:
-      SubnetId: !Ref PublicSubnet1
-      RouteTableId: !Ref PublicRouteTable
-
-  PublicSubnet2RouteTableAssociation:
-    Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties:
-      SubnetId: !Ref PublicSubnet2
-      RouteTableId: !Ref PublicRouteTable
-
-  # Create two private subnets
-  PrivateSubnet1:
-    Type: AWS::EC2::Subnet
-    Properties:
-      VpcId: !Ref VPC
-      CidrBlock: 10.0.3.0/24
-      AvailabilityZone: !Select
-        - 0
-        - !GetAZs ''
-        # Select the first availability zone
-      Tags:
-        - Key: Name
-          Value: demoPrivateSubnet1
-
-  PrivateSubnet2:
-    Type: AWS::EC2::Subnet
-    Properties:
-      VpcId: !Ref VPC
-      CidrBlock: 10.0.4.0/24
-      AvailabilityZone: !Select
-        - 1
-        - !GetAZs ''
-        # Select the second availability zone
-      Tags:
-        - Key: Name
-          Value: demoPrivateSubnet2
-
   # Create a security group for the EC2 instances
   EC2InstanceSecurityGroup:
     Type: AWS::EC2::SecurityGroup
@@ -183,7 +46,36 @@ Resources:
       Type: string
       Value: /aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2 # the latest Amazon Linux 2 AMI ID
 
-  # Create a Load Balance Security Group
+  # Create a launch configuration for the Auto Scaling group
+  LaunchConfiguration:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties:
+      ImageId: !Ref AMIID # Use the AMI ID fetched from SSM Parameter or your own custom AMI
+      InstanceType: t2.micro
+      SecurityGroups:
+        - !Ref EC2InstanceSecurityGroup
+      IamInstanceProfile: !Ref EC2InstanceProfile
+
+  # Create an Auto Scaling group with two instances
+  AutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      LaunchConfigurationName: !Ref LaunchConfiguration
+      MinSize: '2'
+      MaxSize: '2'
+      DesiredCapacity: '2'
+      VPCZoneIdentifier:
+        # Place instances in private subnets
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      TargetGroupARNs:
+        - !Ref LoadBalancerTargetGroup
+      Tags:
+        - Key: Name
+          Value: demoAutoScalingInstance
+          PropagateAtLaunch: true
+
+          # Create a Load Balance Security Group
   LoadBalancerSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -237,35 +129,6 @@ Resources:
       LoadBalancerArn: !Ref LoadBalancer
       Port: 80
       Protocol: HTTP
-
-  # Create a launch configuration for the Auto Scaling group
-  LaunchConfiguration:
-    Type: AWS::AutoScaling::LaunchConfiguration
-    Properties:
-      ImageId: !Ref AMIID # Use the AMI ID fetched from SSM Parameter or your own custom AMI
-      InstanceType: t2.micro
-      SecurityGroups:
-        - !Ref EC2InstanceSecurityGroup
-      IamInstanceProfile: !Ref EC2InstanceProfile
-
-  # Create an Auto Scaling group with two instances
-  AutoScalingGroup:
-    Type: AWS::AutoScaling::AutoScalingGroup
-    Properties:
-      LaunchConfigurationName: !Ref LaunchConfiguration
-      MinSize: '2'
-      MaxSize: '2'
-      DesiredCapacity: '2'
-      VPCZoneIdentifier:
-        # Place instances in private subnets
-        - !Ref PrivateSubnet1
-        - !Ref PrivateSubnet2
-      TargetGroupARNs:
-        - !Ref LoadBalancerTargetGroup
-      Tags:
-        - Key: Name
-          Value: demoAutoScalingInstance
-          PropagateAtLaunch: true
 
   # Create a security group for the RDS instance
   RDSSecurityGroup:
