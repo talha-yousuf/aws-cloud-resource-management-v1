@@ -1,5 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: CloudFormation template to provision a secure and scalable AWS infrastructure for a nodeJS app
+Description: CloudFormation template to provision a secure and scalable AWS
+  infrastructure for a nodeJS app
 
 Resources:
   # Creates an IAM user
@@ -177,8 +178,10 @@ Resources:
 
   # Fetch a basic free-tier AMI provided by AWS
   AMIID:
-    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
-    Default: /aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2 # the latest Amazon Linux 2 AMI ID
+    Type: AWS::SSM::Parameter
+    Properties:
+      Type: string
+      Value: /aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2 # the latest Amazon Linux 2 AMI ID
 
   # Create a Load Balance Security Group
   LoadBalancerSecurityGroup:
@@ -230,7 +233,7 @@ Resources:
           FixedResponseConfig:
             StatusCode: '200'
             ContentType: text/plain
-            MessageBody: 'OK'
+            MessageBody: OK
       LoadBalancerArn: !Ref LoadBalancer
       Port: 80
       Protocol: HTTP
@@ -328,10 +331,6 @@ Outputs:
   RDSHostname:
     Description: The hostname of the RDS instance
     Value: !GetAtt RDSInstance.Endpoint.Address
-
-  RDSDBName:
-    Description: The database name for the RDS instance
-    Value: !Ref RDSInstance.DBName
 
   RedisHostname:
     Description: The hostname of the ElastiCache Redis instance
