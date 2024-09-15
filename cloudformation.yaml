@@ -180,14 +180,14 @@ Resources:
       RouteTableId: !Ref PublicRouteTable
 
   # ----------------------------------------------------------------
-  # EC2, AUTOSCALING AND LOAD_BALANCER
+  # EC2, AUTOSCALING
   # ----------------------------------------------------------------
 
   # Create a security group for the EC2 instances
   EC2InstanceSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupName: demoEC2InstanceSecurityGroup
+      GroupName: demoEC2SecurityGroup
       GroupDescription: 'Allow SSH and HTTP'
       VpcId: !Ref VPC
       SecurityGroupIngress:
@@ -217,22 +217,24 @@ Resources:
             Groups:
               - !Ref EC2InstanceSecurityGroup
         UserData:
+          # To verify, tunnel into EC2 and run "sudo cat /var/log/cloud-init-output.log"
           Fn::Base64: !Sub |
             #!/bin/bash
-            # Update all system packages to their latest versions
+
+            # Update all system packages
             yum update -y
-            # Install the Extra Packages for Enterprise Linux repository for additional packages
-            amazon-linux-extras install epel -y
-            # Install the Apache web server
-            yum install -y httpd
-            # Start the Apache web server
-            systemctl start httpd
-            # Enable Apache to automatically start at boot
-            systemctl enable httpd
-            # Install the 'stress' tool, used for testing the server under heavy load
-            yum install stress -y
-            # Create a simple HTML file with a demo message and save it to the default web directory for Apache
-            echo '<center><h1>Demo Cloud Formation Project</h1></center>' > /var/www/html/index.html
+
+            # Install Node.js (LTS version)
+            curl -sL https://rpm.nodesource.com/setup_16.x | bash -
+            yum install -y nodejs
+
+            # Install CodeDeploy agent for handling deployments
+            yum install -y ruby wget
+            cd /home/ec2-user
+            wget https://aws-codedeploy-us-east-1.s3.us-east-1.amazonaws.com/latest/install
+            chmod +x ./install
+            ./install auto
+            service codedeploy-agent start
 
   # Create AutoScaling Group
   AutoScalingGroup:
@@ -249,7 +251,7 @@ Resources:
         - !Ref PublicSubnet1
         - !Ref PublicSubnet2
       TargetGroupARNs:
-        - !Ref LBTargetGroup
+        - !Ref LBTG
 
   # Policy used to track CPU usage for Auto Scaling
   cpuUsage:
@@ -260,29 +262,32 @@ Resources:
       # This scaling policy adjusts capacity based on target tracking metrics
       TargetTrackingConfiguration:
         PredefinedMetricSpecification:
-          PredefinedMetricType: ASGAverageCPUUtilization
           # Track the average CPU utilization of the Auto Scaling group
-        TargetValue: 50
+          PredefinedMetricType: ASGAverageCPUUtilization
         # Target value for the average CPU utilization is set to 50%
         # The Auto Scaling group will scale up or down to maintain CPU usage around this threshold
+        TargetValue: 50
+
+  # ----------------------------------------------------------------
+  # LOAD_BALANCER
+  # ----------------------------------------------------------------
 
   # Create LB Targetgroup
-  LBTargetGroup:
+  LBTG:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
     Properties:
+      Name: 'demoLBTG'
       VpcId: !Ref VPC
       TargetType: instance
-      HealthCheckPath: /index.html
+      HealthCheckPath: /
       Port: 80
       Protocol: HTTP
-      Tags:
-        - Key: Name
-          Value: demoLBTargetGroup
 
   # Create LB
   LB:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
     Properties:
+      Name: demoLB
       Type: application
       Scheme: internet-facing
       SecurityGroups:
@@ -290,9 +295,6 @@ Resources:
       Subnets:
         - !Ref PublicSubnet1
         - !Ref PublicSubnet2
-      Tags:
-        - Key: Name
-          Value: demoLB
       LoadBalancerAttributes:
         - Key: idle_timeout.timeout_seconds
           Value: '60'
@@ -305,8 +307,60 @@ Resources:
       Port: 80
       DefaultActions:
         - Type: forward
-          TargetGroupArn: !Ref LBTargetGroup
+          TargetGroupArn: !Ref LBTG
       LoadBalancerArn: !Ref LB
+
+  # ----------------------------------------------------------------
+  # CODE DEPLOY
+  # ----------------------------------------------------------------
+
+  CodeDeployServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codedeploy.amazonaws.com
+            Action: sts:AssumeRole
+      Path: '/'
+      Policies:
+        - PolicyName: CodeDeployPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ec2:*
+                  - autoscaling:*
+                  - s3:*
+                  - codedeploy:*
+                Resource: '*'
+
+  CodeDeployApplication:
+    Type: AWS::CodeDeploy::Application
+    Properties:
+      ApplicationName: 'demo-nodejs-app'
+      ComputePlatform: Server
+
+  CodeDeployDeploymentGroup:
+    Type: AWS::CodeDeploy::DeploymentGroup
+    Properties:
+      ApplicationName: !Ref CodeDeployApplication
+      DeploymentGroupName: 'demo-deploy-group'
+      ServiceRoleArn: !GetAtt CodeDeployServiceRole.Arn
+      AutoScalingGroups:
+        - !Ref AutoScalingGroup
+      DeploymentConfigName: CodeDeployDefault.AllAtOnce
+      LoadBalancerInfo:
+        TargetGroupInfoList:
+          - Name: !GetAtt LBTG.TargetGroupName
+      AutoRollbackConfiguration:
+        Enabled: true
+        Events:
+          - DEPLOYMENT_FAILURE
+          - DEPLOYMENT_STOP_ON_ALARM
 
 Outputs:
   VPC:

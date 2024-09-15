@@ -1,0 +1,15 @@
+version: 0.0
+os: linux
+files:
+  - source: /
+    destination: /home/ec2-user/demo-nodejs-app
+hooks:
+  BeforeInstall:
+    - location: scripts/install_dependencies.sh
+      runas: ec2-user
+  AfterInstall:
+    - location: scripts/start_server.sh
+      runas: ec2-user
+  ApplicationStop:
+    - location: scripts/stop_server.sh
+      runas: ec2-user

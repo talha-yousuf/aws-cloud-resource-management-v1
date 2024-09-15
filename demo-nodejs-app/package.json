@@ -1,7 +1,7 @@
 {
-  "name": "demo-app",
+  "name": "demo-nodejs-app",
   "version": "1.0.0",
-  "description": "Node.js app connected to RDS and ElastiCache",
+  "description": "Demo Node.js app connected to RDS and ElastiCache",
   "main": "app.js",
   "scripts": {
     "start": "node app.js"

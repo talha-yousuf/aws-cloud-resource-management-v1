@@ -1,7 +1,7 @@
 #!/bin/bash
 
 STACK=demoApp
-TEMPLATE=file://cf-template.yaml
+TEMPLATE=file://cloudformation.yaml
 CAPABILITY=CAPABILITY_NAMED_IAM
 REGION=us-east-1
 
@@ -56,14 +56,14 @@ while true; do
     echo
 
     show_menu
-    read -p "Enter number: " option
+    read -r -p "Enter number: " option
 
     echo
     echo 'Running:'
     echo
 
     set -x
-    run_command $option
+    run_command "$option"
     set +x
 
     echo
