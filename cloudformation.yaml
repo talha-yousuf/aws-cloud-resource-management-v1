@@ -199,9 +199,47 @@ Resources:
           FromPort: 80
           ToPort: 80
           CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 3000
+          ToPort: 3000
+          CidrIp: 0.0.0.0/0 # Allow traffic on port 3000 where the node app will be running
+
+  # IAM Role that provides necessary permissions for EC2 instances to run AWS commands
+  EC2InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: demoEC2InstanceRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      # Attach a policy granting access to S3 and STS for the instances
+      Policies:
+        - PolicyName: demoEC2InstancePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource: 'arn:aws:s3:::demo-app-bucket-*/*'
+              - Effect: Allow
+                Action:
+                  - sts:GetCallerIdentity
+                Resource: '*'
+
+  # Attach the role to the EC2 instances via an instance profile
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: demoEC2InstanceProfile
+      Roles:
+        - !Ref EC2InstanceRole
 
   # Template for Auto-scaling Group
-  # todo: attach permissions to run AWS commands here
   AutoScalingLaunchTemplate:
     Type: AWS::EC2::LaunchTemplate
     Properties:
@@ -212,6 +250,8 @@ Resources:
         # Create key-pair manaully before-hand
         # aws ec2 create-key-pair --key-name demoAutoScalingKeyPair --query 'KeyMaterial' --output text > demoAutoScalingKeyPair.pem
         KeyName: demoAutoScalingKeyPair
+        IamInstanceProfile:
+          Name: !Ref EC2InstanceProfile
         NetworkInterfaces:
           - DeviceIndex: 0
             AssociatePublicIpAddress: true
@@ -219,6 +259,7 @@ Resources:
               - !Ref EC2InstanceSecurityGroup
         UserData:
           # To verify, tunnel into EC2 and run "sudo cat /var/log/cloud-init-output.log"
+          # When the userData script is updated the EC2 instances need to be restarted
           Fn::Base64: !Sub |
             #!/bin/bash
 
@@ -266,7 +307,7 @@ Resources:
         - !Ref PublicSubnet1
         - !Ref PublicSubnet2
       TargetGroupARNs:
-        - !Ref LBTG
+        - !Ref LBTargetGroup
 
   # Policy used to track CPU usage for Auto Scaling
   cpuUsage:
@@ -287,18 +328,18 @@ Resources:
   # LOAD_BALANCER
   # ----------------------------------------------------------------
 
-  # Create LB Targetgroup
-  LBTG:
+  # Create Load Balancer Target Group
+  LBTargetGroup:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
     Properties:
-      Name: 'demoLBTG'
+      Name: 'demoLBTargetGroup'
       VpcId: !Ref VPC
       TargetType: instance
-      HealthCheckPath: /
-      Port: 80
+      HealthCheckPath: / # Ensure your health check path matches a valid route in your app
+      Port: 3000 # Port on which the node application is running
       Protocol: HTTP
 
-  # Create LB
+  # Create Load Balancer
   LB:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
     Properties:
@@ -313,8 +354,7 @@ Resources:
       LoadBalancerAttributes:
         - Key: idle_timeout.timeout_seconds
           Value: '60'
-
-  # Create LB listener
+  # Create Load Balancer listener
   LBlistener:
     Type: AWS::ElasticLoadBalancingV2::Listener
     Properties:
@@ -322,7 +362,7 @@ Resources:
       Port: 80
       DefaultActions:
         - Type: forward
-          TargetGroupArn: !Ref LBTG
+          TargetGroupArn: !Ref LBTargetGroup
       LoadBalancerArn: !Ref LB
 
   # ----------------------------------------------------------------
@@ -370,7 +410,7 @@ Resources:
   #     DeploymentConfigName: CodeDeployDefault.AllAtOnce
   #     LoadBalancerInfo:
   #       TargetGroupInfoList:
-  #         - Name: !GetAtt LBTG.TargetGroupName
+  #         - Name: !GetAtt LBTargetGroup.TargetGroupName
   #     AutoRollbackConfiguration:
   #       Enabled: true
   #       Events:
