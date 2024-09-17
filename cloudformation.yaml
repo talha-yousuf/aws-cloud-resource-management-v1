@@ -230,6 +230,10 @@ Resources:
                 Action:
                   - sts:GetCallerIdentity
                 Resource: '*'
+              - Effect: Allow
+                Action:
+                  - cloudformation:DescribeStacks
+                Resource: '*'
 
   # Attach the role to the EC2 instances via an instance profile
   EC2InstanceProfile:
@@ -260,17 +264,18 @@ Resources:
         UserData:
           # To verify, tunnel into EC2 and run "sudo cat /var/log/cloud-init-output.log"
           # When the userData script is updated the EC2 instances need to be restarted
+          # todo: could put this script in s3 and then pull and run here
           Fn::Base64: !Sub |
             #!/bin/bash
 
-            # Update all system packages
+            echo "# Update all system packages"
             yum update -y
 
-            # Install Node.js (LTS version)
+            echo "# Install Node.js"
             curl -sL https://rpm.nodesource.com/setup_16.x | bash -
             yum install -y nodejs
 
-            # Install CodeDeploy agent for handling deployments
+            # echo "# Install CodeDeploy agent for handling deployments"
             # yum install -y ruby wget
             # cd /home/ec2-user
             # wget https://aws-codedeploy-us-east-1.s3.us-east-1.amazonaws.com/latest/install
@@ -278,18 +283,42 @@ Resources:
             # ./install auto
             # service codedeploy-agent start
 
-            # Pull and run app manually
             cd /home/ec2-user
+
+            echo "# Make a clean dir"
+            rm -rf node-app
             mkdir -p node-app
             cd node-app
+
+            echo "# Download code from s3"
             account_id=$(aws sts get-caller-identity --query "Account" --output text)
             app_name="demo-nodejs-app"
             app_zip="demo-nodejs-app.zip"
             bucket_name="demo-app-bucket-$account_id"
             aws s3 cp "s3://$bucket_name/$app_zip" ./
+
+            echo "# Unzip code"
             unzip "$app_zip"
             cd "$app_name"
+
+            echo "# Install deps"
             npm install
+
+            echo "# Fetch stack outputs"
+            REGION=us-east-1
+            STACK=demoApp
+
+            getOutputs="aws cloudformation describe-stacks --stack-name $STACK --region $REGION --output text --query"
+
+            RDS_ENDPOINT=$($getOutputs "Stacks[0].Outputs[?OutputKey=='RDSEndpoint'].OutputValue")
+            REDIS_ENDPOINT=$($getOutputs "Stacks[0].Outputs[?OutputKey=='RedisEndpoint'].OutputValue")
+
+            echo "# Export environment variables"
+            rm -rf .env
+            echo "RDS_ENDPOINT=$RDS_ENDPOINT" >> "/home/ec2-user/node-app/$app_name/.env"
+            echo "REDIS_ENDPOINT=$REDIS_ENDPOINT" >> "/home/ec2-user/node-app/$app_name/.env"
+
+            echo "# Run App.js"
             node app.js >app.log 2>&1 &
 
   # Create AutoScaling Group
@@ -364,6 +393,80 @@ Resources:
         - Type: forward
           TargetGroupArn: !Ref LBTargetGroup
       LoadBalancerArn: !Ref LB
+
+  # ----------------------------------------------------------------
+  # RDS AND ELASTICACHE
+  # ----------------------------------------------------------------
+
+  # Create a security group for the RDS instance
+  RDSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Confine access to RDS MySQL instance to within the VPC
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: 10.0.0.0/16
+
+  # Subnet Group for RDS instance
+  RDSSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: 'Subnet group for RDS'
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+
+  # Create the RDS MySQL database instance
+  RDSInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceClass: db.t3.micro
+      Engine: 'mysql'
+      MasterUsername: adminUsername
+      MasterUserPassword: adminPassword
+      DBName: demoDatabase
+      # MultiAZ: true # disabled to avoid going over free tier
+      AllocatedStorage: '10' # minimum storage requirements
+      VPCSecurityGroups:
+        - !Ref RDSSecurityGroup
+      PubliclyAccessible: false
+      BackupRetentionPeriod: 0 # disabled to avoid going over free tier
+      DBSubnetGroupName: !Ref RDSSubnetGroup
+
+  # Create a Security Group for ElastiCache
+  ElastiCacheSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Confine access to ElastiCache Redis Cluster to within the VPC
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 6379
+          ToPort: 6379
+          CidrIp: 10.0.0.0/16
+
+  # Create an ElastiCache Subnet Group
+  ElastiCacheSubnetGroup:
+    Type: AWS::ElastiCache::SubnetGroup
+    Properties:
+      Description: Subnet group for ElastiCache
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+
+  # Create an ElastiCache Redis Cluster
+  ElastiCacheCluster:
+    Type: AWS::ElastiCache::CacheCluster
+    Properties:
+      Engine: redis
+      CacheNodeType: cache.t2.micro
+      NumCacheNodes: 1 # 2 nodes could likely exceed free tier
+      CacheSubnetGroupName: !Ref ElastiCacheSubnetGroup
+      VpcSecurityGroupIds:
+        - !Ref ElastiCacheSecurityGroup
 
   # ----------------------------------------------------------------
   # CODE DEPLOY
@@ -445,3 +548,11 @@ Outputs:
   LoadBalancerDNSName:
     Description: The DNS name of the load balancer
     Value: !GetAtt LB.DNSName
+
+  RDSEndpoint:
+    Description: Endpoint of the RDS instance
+    Value: !GetAtt RDSInstance.Endpoint.Address
+
+  RedisEndpoint:
+    Description: Endpoint of the ElastiCache Redis cluster
+    Value: !GetAtt ElastiCacheCluster.RedisEndpoint.Address

@@ -48,6 +48,7 @@ fi
 
 echo
 echo "Bundling app code into zip..."
+rm -rf "$app_name/node_modules"
 powershell Compress-Archive -Path "$app_name" -DestinationPath "$app_zip" -Force
 if [ -f "$app_zip" ]; then
     echo "Zip created."
