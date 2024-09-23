@@ -275,6 +275,7 @@ Resources:
             curl -sL https://rpm.nodesource.com/setup_16.x | bash -
             yum install -y nodejs
 
+            # todo: debug AWS-Code-Deploy deployment 
             # echo "# Install CodeDeploy agent for handling deployments"
             # yum install -y ruby wget
             # cd /home/ec2-user
@@ -282,6 +283,12 @@ Resources:
             # chmod +x ./install
             # ./install auto
             # service codedeploy-agent start
+
+            echo "# Install stress testing tool"
+            yum install stress -y
+            # to run the test tunnel in EC2 and run "stress -c 8 -v"
+            # then wait for the utilization to go past the threshold that was set
+            # that will trigger an alarm and cause a new instance to spin off to offset the load 
 
             cd /home/ec2-user
 
@@ -333,8 +340,8 @@ Resources:
         Version: !GetAtt AutoScalingLaunchTemplate.LatestVersionNumber
       HealthCheckType: ELB
       VPCZoneIdentifier:
-        - !Ref PublicSubnet1
-        - !Ref PublicSubnet2
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
       TargetGroupARNs:
         - !Ref LBTargetGroup
 
@@ -468,57 +475,212 @@ Resources:
       VpcSecurityGroupIds:
         - !Ref ElastiCacheSecurityGroup
 
+
+  # todo: further test resources defined below this
+
   # ----------------------------------------------------------------
   # CODE DEPLOY
   # ----------------------------------------------------------------
 
-  # CodeDeployServiceRole:
-  #   Type: AWS::IAM::Role
-  #   Properties:
-  #     AssumeRolePolicyDocument:
-  #       Version: '2012-10-17'
-  #       Statement:
-  #         - Effect: Allow
-  #           Principal:
-  #             Service: codedeploy.amazonaws.com
-  #           Action: sts:AssumeRole
-  #     Path: '/'
-  #     Policies:
-  #       - PolicyName: CodeDeployPolicy
-  #         PolicyDocument:
-  #           Version: '2012-10-17'
-  #           Statement:
-  #             - Effect: Allow
-  #               Action:
-  #                 - ec2:*
-  #                 - autoscaling:*
-  #                 - s3:*
-  #                 - codedeploy:*
-  #               Resource: '*'
+  CodeDeployServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codedeploy.amazonaws.com
+            Action: sts:AssumeRole
+      Path: '/'
+      Policies:
+        - PolicyName: CodeDeployPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ec2:*
+                  - autoscaling:*
+                  - s3:*
+                  - codedeploy:*
+                Resource: '*'
 
-  # CodeDeployApplication:
-  #   Type: AWS::CodeDeploy::Application
-  #   Properties:
-  #     ApplicationName: 'demo-nodejs-app'
-  #     ComputePlatform: Server
+  CodeDeployApplication:
+    Type: AWS::CodeDeploy::Application
+    Properties:
+      ApplicationName: 'demo-nodejs-app'
+      ComputePlatform: Server
 
-  # CodeDeployDeploymentGroup:
-  #   Type: AWS::CodeDeploy::DeploymentGroup
-  #   Properties:
-  #     ApplicationName: !Ref CodeDeployApplication
-  #     DeploymentGroupName: 'demo-deploy-group'
-  #     ServiceRoleArn: !GetAtt CodeDeployServiceRole.Arn
-  #     AutoScalingGroups:
-  #       - !Ref AutoScalingGroup
-  #     DeploymentConfigName: CodeDeployDefault.AllAtOnce
-  #     LoadBalancerInfo:
-  #       TargetGroupInfoList:
-  #         - Name: !GetAtt LBTargetGroup.TargetGroupName
-  #     AutoRollbackConfiguration:
-  #       Enabled: true
-  #       Events:
-  #         - DEPLOYMENT_FAILURE
-  #         - DEPLOYMENT_STOP_ON_ALARM
+  CodeDeployDeploymentGroup:
+    Type: AWS::CodeDeploy::DeploymentGroup
+    Properties:
+      ApplicationName: !Ref CodeDeployApplication
+      DeploymentGroupName: 'demo-deploy-group'
+      ServiceRoleArn: !GetAtt CodeDeployServiceRole.Arn
+      AutoScalingGroups:
+        - !Ref AutoScalingGroup
+      DeploymentConfigName: CodeDeployDefault.AllAtOnce
+      LoadBalancerInfo:
+        TargetGroupInfoList:
+          - Name: !GetAtt LBTargetGroup.TargetGroupName
+      AutoRollbackConfiguration:
+        Enabled: true
+        Events:
+          - DEPLOYMENT_FAILURE
+          - DEPLOYMENT_STOP_ON_ALARM
+
+  # ----------------------------------------------------------------
+  # CloudWatch Alarms for RDS
+  # ----------------------------------------------------------------
+
+  AlarmNotificationTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: AlarmNotificationTopic
+      Subscription:
+        - Endpoint: talhayousuf.work@gmail.com
+          Protocol: email
+
+  EC2CPUUtilizationAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: EC2-High-CPU-Utilization
+      MetricName: CPUUtilization
+      Namespace: AWS/EC2
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 80
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      AlarmActions:
+        - !Ref AlarmNotificationTopic
+      Dimensions:
+        - Name: InstanceId
+          Value: !GetAtt AutoScalingGroup.Instances[0].InstanceId
+
+  RDSCPUUtilizationAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: RDS-High-CPU-Utilization
+      MetricName: CPUUtilization
+      Namespace: AWS/RDS
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 80
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      AlarmActions:
+        - !Ref AlarmNotificationTopic
+      Dimensions:
+        - Name: DBInstanceIdentifier
+          Value: !Ref RDSInstance
+
+  ElastiCacheMemoryUsageAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: ElastiCache-High-Memory-Usage
+      MetricName: BytesUsedForCache
+      Namespace: AWS/ElastiCache
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 90
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      AlarmActions:
+        - !Ref AlarmNotificationTopic
+      Dimensions:
+        - Name: CacheClusterId
+          Value: !Ref ElastiCacheCluster
+
+  # ----------------------------------------------------------------
+  # WAF Web ACL and Shield
+  # ----------------------------------------------------------------
+
+  # Create Web ACL ruleset to block specific countries
+  WebACL:
+    Type: AWS::WAFv2::WebACL
+    Properties:
+      Name: demoWebACL
+      Scope: REGIONAL
+      DefaultAction:
+        Allow: {}
+      Description: Web ACL to protect the application
+      VisibilityConfig:
+        SampledRequestsEnabled: true
+        CloudWatchMetricsEnabled: true
+        MetricName: demoWebACL
+      Rules:
+        - Name: BlockCountryRule
+          Priority: 1
+          Action:
+            Block: {}
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: BlockCountryRule
+          Statement:
+            GeoMatchStatement:
+              CountryCodes:
+                - RO
+                - PL
+                - US
+                - JP
+                - NL
+
+  # Associate WAF Web ACL with an Application Load Balancer (ALB)
+  WebACLAssociation:
+    Type: AWS::WAFv2::WebACLAssociation
+    Properties:
+      ResourceArn: !Ref LB # Application's Load Balancer ARN
+      WebACLArn: !GetAtt WebACL.Arn
+
+  # AWS Shield Protection
+  ShieldProtection:
+    Type: AWS::Shield::Protection
+    Properties:
+      Name: demoShieldProtection
+      ResourceArn: !Ref LB
+
+  # ----------------------------------------------------------------
+  # Restricted IAM role and policy
+  # ----------------------------------------------------------------
+
+  # Create user to be restricted
+  RestrictedIAMUser:
+    Type: AWS::IAM::User
+    Properties:
+      UserName: demoRestrictedUser
+
+  # Create restricted role
+  RestrictedIAMRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: demoRestrictedRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !GetAtt RestrictedIAMUser.Arn
+            Action: sts:AssumeRole
+
+  # Create restricted policy
+  RestrictedPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: demoRestrictedPolicy
+      Roles:
+        - !Ref RestrictedIAMRole
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - ec2:DescribeInstances
+              - rds:DescribeDBInstances
+              - rds:ListTagsForResource
+            Resource: '*'
 
 Outputs:
   VPC:
