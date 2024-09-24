@@ -1,5 +1,3 @@
-### Resources
-
 1. https://asecure.cloud/cloudformation-validation/
 1. https://github.com/kobbikobb/cloud-formation-code-deploy
 1. https://github.com/vicjor/aws-saa-c03

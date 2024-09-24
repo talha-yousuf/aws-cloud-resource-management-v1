@@ -191,18 +191,21 @@ Resources:
       GroupDescription: 'Allow SSH and HTTP'
       VpcId: !Ref VPC
       SecurityGroupIngress:
+        # Allow SSH access
         - IpProtocol: tcp
           FromPort: 22
           ToPort: 22
           CidrIp: 0.0.0.0/0
+        # Allow HTTP access
         - IpProtocol: tcp
           FromPort: 80
           ToPort: 80
           CidrIp: 0.0.0.0/0
+        # Allow nodejs app access
         - IpProtocol: tcp
           FromPort: 3000
           ToPort: 3000
-          CidrIp: 0.0.0.0/0 # Allow traffic on port 3000 where the node app will be running
+          CidrIp: 0.0.0.0/0
 
   # IAM Role that provides necessary permissions for EC2 instances to run AWS commands
   EC2InstanceRole:
@@ -251,7 +254,7 @@ Resources:
       LaunchTemplateData:
         ImageId: !Ref LatestAmiId
         InstanceType: t2.micro
-        # Create key-pair manaully before-hand
+        # Create key-pair manually before-hand
         # aws ec2 create-key-pair --key-name demoAutoScalingKeyPair --query 'KeyMaterial' --output text > demoAutoScalingKeyPair.pem
         KeyName: demoAutoScalingKeyPair
         IamInstanceProfile:
@@ -262,7 +265,7 @@ Resources:
             Groups:
               - !Ref EC2InstanceSecurityGroup
         UserData:
-          # To verify, tunnel into EC2 and run "sudo cat /var/log/cloud-init-output.log"
+          # To debug tunnel into EC2 and run "sudo cat /var/log/cloud-init-output.log"
           # When the userData script is updated the EC2 instances need to be restarted
           # todo: could put this script in s3 and then pull and run here
           Fn::Base64: !Sub |
@@ -371,7 +374,7 @@ Resources:
       Name: 'demoLBTargetGroup'
       VpcId: !Ref VPC
       TargetType: instance
-      HealthCheckPath: / # Ensure your health check path matches a valid route in your app
+      HealthCheckPath: / # Can be any valid route in your app
       Port: 3000 # Port on which the node application is running
       Protocol: HTTP
 
@@ -390,6 +393,7 @@ Resources:
       LoadBalancerAttributes:
         - Key: idle_timeout.timeout_seconds
           Value: '60'
+
   # Create Load Balancer listener
   LBlistener:
     Type: AWS::ElasticLoadBalancingV2::Listener
@@ -412,6 +416,11 @@ Resources:
       GroupDescription: Confine access to RDS MySQL instance to within the VPC
       VpcId: !Ref VPC
       SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: 10.0.0.0/16 # application's VPC CIDR
+      SecurityGroupEgress:
         - IpProtocol: tcp
           FromPort: 3306
           ToPort: 3306
@@ -453,6 +462,11 @@ Resources:
         - IpProtocol: tcp
           FromPort: 6379
           ToPort: 6379
+          CidrIp: 10.0.0.0/16 # application's VPC CIDR
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 6379
+          ToPort: 6379
           CidrIp: 10.0.0.0/16
 
   # Create an ElastiCache Subnet Group
@@ -474,7 +488,6 @@ Resources:
       CacheSubnetGroupName: !Ref ElastiCacheSubnetGroup
       VpcSecurityGroupIds:
         - !Ref ElastiCacheSecurityGroup
-
 
   # todo: further test resources defined below this
 
@@ -557,7 +570,7 @@ Resources:
         - !Ref AlarmNotificationTopic
       Dimensions:
         - Name: InstanceId
-          Value: !GetAtt AutoScalingGroup.Instances[0].InstanceId
+          Value: !Ref AutoScalingGroup
 
   RDSCPUUtilizationAlarm:
     Type: AWS::CloudWatch::Alarm
@@ -597,7 +610,7 @@ Resources:
   # WAF Web ACL and Shield
   # ----------------------------------------------------------------
 
-  # Create Web ACL ruleset to block specific countries
+  # Create Web ACL rule-set to block specific countries
   WebACL:
     Type: AWS::WAFv2::WebACL
     Properties:
